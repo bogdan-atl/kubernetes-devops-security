@@ -24,6 +24,7 @@ pipeline {
 
     stage('Docker image build and push') {
       steps {
+        sh 'printenv'
         sh 'docker build -t capsman/java-app:""$GIT_COMMMIT"" .'
         sh 'docker push capsman/java-app:""$GIT_COMMMIT""'
        }
