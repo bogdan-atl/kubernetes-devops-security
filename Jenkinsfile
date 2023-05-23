@@ -30,6 +30,7 @@ pipeline {
           sh 'docker push capsman/java-app:""$GIT_COMMIT""'
         }
       }
+    }
     stage('Kubernetes Deployment - DEV') {
       steps {
         withKubeConfig([credentialsId: 'kubeconfig']) {
