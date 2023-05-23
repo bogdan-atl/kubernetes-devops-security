@@ -18,6 +18,8 @@ spec:
       containers:
       - image: replace
         name: devsecops-container
+      imagePullSecrets:
+      - name: my-dockerhub-secret
 ---
 apiVersion: v1
 kind: Service
