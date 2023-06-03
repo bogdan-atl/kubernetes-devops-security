@@ -30,8 +30,16 @@ pipeline {
           },
           "Trivy Scan": {
             sh "bash trivy-docker-image-scan.sh"
+          },
+          "OPA Conftest": {
+            sh "/usr/local/bin/conftest test --policy opa-docker-security.rego Dockerfile"
           }
         )
+      }
+    }
+    stage('Vulnerability Scan - Kubernetes') {
+      steps {
+        sh '/usr/local/bin/conftest test --policy opa-k8s-security.rego k8s_deployment_service.yaml'
       }
     }
 
