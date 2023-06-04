@@ -7,7 +7,7 @@ pipeline {
     deploymentName = "devsecops"
     containerName = "devsecops-container"
     serviceName = "devsecops-svc"
-    imageName = "capsman/java-app:latest"
+    imageName = "capsman/java-app:""$GIT_COMMIT"""
   }
 
   stages {
