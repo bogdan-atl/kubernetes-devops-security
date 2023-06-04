@@ -47,10 +47,13 @@ pipeline {
       }
     }
 
-    stage('Docker Build and Push') {
+    stage('Docker image build and push') {
       steps {
-          sh 'sudo docker build -t capsman/java-app:latest .'
-          sh 'docker push capsman/java-app:latest'
+        withDockerRegistry([credentialsId: "docker-hub", url: ""]) {
+          sh 'printenv'
+          sh 'docker build -t capsman/java-app:latest .'
+          sh 'docker push capsman/java-app:latest"'
+        }
       }
     }
 
