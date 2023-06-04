@@ -1,7 +1,17 @@
+
+
 pipeline {
   agent any
 
+  environment {
+    deploymentName = "devsecops"
+    containerName = "devsecops-container"
+    serviceName = "devsecops-svc"
+    imageName = "capsman/java-app:latest"
+  }
+
   stages {
+
     stage('Build Artifact - Maven') {
       steps {
         sh "mvn clean package -DskipTests=true"
@@ -9,18 +19,17 @@ pipeline {
       }
     }
 
-    stage('Unit Tests - JUnit and Jacoco') {
+    stage('Unit Tests - JUnit and JaCoCo') {
       steps {
         sh "mvn test"
-        sh "mvn org.pitest:pitest-maven:mutationCoverage"
       }
     }
 
-    //stage('SonarQube - SAST') {
-      //steps {
-       // sh "mvn sonar:sonar -Dsonar.projectKey=devsecops-numeric-application -Dsonar.projectName='devsecops-numeric-application' -Dsonar.host.url=http://45.156.23.33:9000 -Dsonar.login=sqp_94c4e149e9e1b4d930060f95848cd8d7d5192778"
-      //}
-    //}
+    stage('Mutation Tests - PIT') {
+      steps {
+        sh "mvn org.pitest:pitest-maven:mutationCoverage"
+      }
+    }
 
     stage('Vulnerability Scan - Docker') {
       steps {
@@ -32,14 +41,9 @@ pipeline {
             sh "bash trivy-docker-image-scan.sh"
           },
           "OPA Conftest": {
-            sh "/usr/local/bin/conftest test --policy opa-docker-security.rego Dockerfile"
+            sh '/usr/local/bin/conftest test --policy opa-docker-security.rego Dockerfile'
           }
         )
-      }
-    }
-    stage('Vulnerability Scan - Kubernetes') {
-      steps {
-        sh '/usr/local/bin/conftest test --policy opa-k8s-security.rego k8s_deployment_service.yaml'
       }
     }
 
@@ -53,14 +57,32 @@ pipeline {
       }
     }
 
-    stage('Kubernetes Deployment - DEV') {
+    stage('Vulnerability Scan - Kubernetes') {
       steps {
-        withKubeConfig([credentialsId: 'kubeconfig']) {
-          sh "sed -i 's#replace#capsman/java-app:${GIT_COMMIT}#g' k8s_deployment_service.yaml"
-          sh "kubectl apply -f k8s_deployment_service.yaml"
-        }
+        parallel(
+          "OPA Scan": {
+            sh '/usr/local/bin/conftest test --policy opa-k8s-security.rego k8s_deployment_service.yaml'
+          },
+          "Kubesec Scan": {
+            sh "bash kubesec-scan.sh"
+          }
+        )
       }
     }
+
+    stage('K8S Deployment - DEV') {
+      steps {
+        parallel(
+          "Deployment": {
+              sh "bash k8s-deployment.sh"
+          },
+          "Rollout Status": {
+              sh "bash k8s-deployment-rollout-status.sh"
+          }
+        )
+      }
+    }
+
   }
 
   post {
@@ -70,5 +92,7 @@ pipeline {
       pitmutation mutationStatsFile: '**/target/pit-reports/**/mutations.xml'
       dependencyCheckPublisher pattern: 'target/dependency-check-report.xml'
     }
+
   }
+
 }
