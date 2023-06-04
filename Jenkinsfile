@@ -1,6 +1,13 @@
 pipeline {
   agent any
 
+  environment {
+    deploymentName = "devsecops"
+    containerName = "devsecops-container"
+    serviceName = "devsecops-svc"
+    imageName = "capsman/java-app:""$GIT_COMMIT"""
+  }
+
   stages {
     stage('Build Artifact - Maven') {
       steps {
@@ -37,11 +44,7 @@ pipeline {
         )
       }
     }
-    stage('Vulnerability Scan - Kubernetes') {
-      steps {
-        sh '/usr/local/bin/conftest test --policy opa-k8s-security.rego k8s_deployment_service.yaml'
-      }
-    }
+
 
     stage('Docker image build and push') {
       steps {
@@ -53,15 +56,33 @@ pipeline {
       }
     }
 
-    stage('Kubernetes Deployment - DEV') {
+    stage('Vulnerability Scan - Kubernetes') {
       steps {
-        withKubeConfig([credentialsId: 'kubeconfig']) {
-          sh "sed -i 's#replace#capsman/java-app:${GIT_COMMIT}#g' k8s_deployment_service.yaml"
-          sh "kubectl apply -f k8s_deployment_service.yaml"
-        }
+        parallel(
+          "OPA Scan": {
+            sh '/usr/local/bin/conftest test --policy opa-k8s-security.rego k8s_deployment_service.yaml'
+          },
+          "Kubesec Scan": {
+            sh "bash kubesec-scan.sh"
+          }
+        )
       }
     }
-  }
+
+    stage('K8S Deployment - DEV') {
+      steps {
+        parallel(
+          "Deployment": {
+              sh "bash k8s-deployment.sh"
+          },
+          "Rollout Status": {
+              sh "bash k8s-deployment-rollout-status.sh"
+          }
+        )
+      }
+    }
+
+
 
   post {
     always {
