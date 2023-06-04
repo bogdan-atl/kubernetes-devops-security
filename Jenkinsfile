@@ -7,7 +7,7 @@ pipeline {
     deploymentName = "devsecops"
     containerName = "devsecops-container"
     serviceName = "devsecops-svc"
-    imageName = "capsman/java-app:""$GIT_COMMIT"""
+    imageName = "capsman/java-app:latest"
   }
 
   stages {
@@ -51,8 +51,8 @@ pipeline {
       steps {
         withDockerRegistry([credentialsId: "docker-hub", url: ""]) {
           sh 'printenv'
-          sh 'docker build -t capsman/java-app:""$GIT_COMMIT"" .'
-          sh 'docker push capsman/java-app:""$GIT_COMMIT""'
+          sh 'docker build -t capsman/java-app:latest .'
+          sh 'docker push capsman/java-app:latest'
         }
       }
     }
