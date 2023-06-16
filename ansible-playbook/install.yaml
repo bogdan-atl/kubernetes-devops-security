@@ -1,0 +1,234 @@
+---
+- name: Установка Docker
+  hosts: all
+  become: true
+  tasks:
+
+    - name: Обновление списка пакетов
+      apt:
+        update_cache: yes
+
+    - name: Установка необходимых пакетов
+      apt:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - software-properties-common
+        - apt-transport-https
+        - ca-certificates
+        - curl
+        - gnupg
+        - jq
+        - git
+
+    - name: Создание каталога /etc/apt/keyrings
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Создание каталога /etc/apt/sources.list.d
+      file:
+        path: /etc/apt/sources.list.d
+        state: directory
+        mode: '0755'
+
+    - name: Check if Docker GPG key
+      stat:
+        path: /etc/apt/trusted.gpg.d/docker.gpg
+      register: gpg_key_file
+
+    - name: Check if Docker GPG keyring
+      stat:
+        path: /usr/share/keyrings/docker-archive-keyring.gpg
+      register: gpg_key_key
+
+    - name: Check if Docker GPG keyring 2
+      stat:
+        path: /usr/share/keyrings/docker-archive-keyring.gpg
+      register: gpg_key_key2
+
+    - name: Add Docker GPG key
+      shell: 'curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/docker.gpg'
+      when: not gpg_key_file.stat.exists
+
+    - name: Add docker GPG keyrings
+      shell: 'curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg'
+      when: not gpg_key_key.stat.exists
+
+    - name: Установка прав на файл docker.gpg
+      file:
+        path: /etc/apt/trusted.gpg.d/docker.gpg
+        mode: '0644'
+      when: not gpg_key_key.stat.exists
+
+
+    - name: Добавление репозитория Docker в /etc/apt/sources.list.d/docker.list
+      shell: 'echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null'
+      when: not gpg_key_key2.stat.exists
+
+    - name: Обновление списка пакетов после добавления Docker
+      apt:
+        update_cache: yes
+
+    - name: Установка Docker
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+
+
+    - name: Установка default-jdk
+      become: true
+      apt:
+        name: default-jdk
+        state: present
+
+    - name: Установка maven
+      apt:
+        name:
+          - maven
+        state: present
+
+    - name: Download Minikube binary
+      become: true
+      shell: curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+      args:
+        chdir: /tmp
+
+    - name: Install Minikube
+      become: true
+      shell: install /tmp/minikube-linux-amd64 /usr/local/bin/minikube
+
+    #- name: Старт sonarqube
+    #  become: true
+     # shell: docker run -d --name sonarqube -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true -p 9000:9000 sonarqube:latest
+     # changed_when: false
+
+
+    - name: Add the trivy-repo
+      apt:
+        update_cache: yes
+        name: "{{ item }}"
+      loop:
+        - wget
+        - apt-transport-https
+        - gnupg
+        - lsb-release
+
+    - name: Add Trivy repository key
+      apt_key:
+        url: "https://aquasecurity.github.io/trivy-repo/deb/public.key"
+        state: present
+
+    - name: Add Trivy repository
+      lineinfile:
+        dest: "/etc/apt/sources.list.d/trivy.list"
+        line: "deb https://aquasecurity.github.io/trivy-repo/deb {{ ansible_distribution_release }} main"
+        create: yes
+
+    - name: Update Repo
+      apt:
+        update_cache: yes
+
+    - name: Install Trivy
+      apt:
+        name: trivy
+        state: present
+        update_cache: yes
+
+    - name: Create installation directory
+      file:
+        path: /root/
+        state: directory
+
+    - name: Download OPA binary
+      get_url:
+        url: https://github.com/open-policy-agent/opa/releases/download/v0.38.1/opa_linux_amd64
+        dest: /root/opa
+        mode: '0755'
+
+    - name: Run OPA in the background
+      shell: ./opa run -s &
+
+
+    - name: Print the output of OPA run command
+      debug:
+        msg: "OPA is running successfully"
+
+    - name: Change directory to /root/
+      become: true
+      shell: cd /root/
+
+    - name: Get latest version of conftest
+      become: true
+      shell: |
+        LATEST_VERSION=$(wget -O - "https://api.github.com/repos/open-policy-agent/conftest/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | cut -c 2-)
+        echo $LATEST_VERSION
+      register: conftest_version
+
+    - name: Download conftest binary
+      become: true
+      shell: |
+        wget "https://github.com/open-policy-agent/conftest/releases/download/v{{ conftest_version.stdout }}/conftest_{{ conftest_version.stdout }}_Linux_x86_64.tar.gz"
+        tar xzf conftest_{{ conftest_version.stdout }}_Linux_x86_64.tar.gz
+      args:
+        chdir: /root/
+
+    - name: Move conftest binary to /usr/local/bin
+      become: true
+      shell: |
+        mv conftest /usr/local/bin/
+      args:
+        chdir: /root/
+
+    - name: Download kubesec
+      become: true
+      become_user: root
+      get_url:
+        url: https://github.com/controlplaneio/kubesec/releases/download/v2.11.2/kubesec_linux_amd64.tar.gz
+        dest: /root/kubesec_linux_amd64.tar.gz
+
+    - name: Extract kubesec tar.gz
+      become: true
+      become_user: root
+      command: tar -xvf /root/kubesec_linux_amd64.tar.gz -C /root/
+
+    - name: Move kubesec to /usr/bin/
+      become: true
+      become_user: root
+      command: mv /root/kubesec /usr/bin/
+
+    - name: Загрузка последней версии kubectl
+      shell: curl -LO https://dl.k8s.io/release/$(curl -LS https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl
+      args:
+        chdir: /tmp
+      register: download_result
+      changed_when: download_result.rc == 0
+
+    - name: Сделать kubectl исполняемым
+      shell: chmod +x /tmp/kubectl
+      register: chmod_result
+      changed_when: chmod_result.rc == 0
+
+    - name: Перемещение kubectl в директорию PATH
+      shell: sudo mv /tmp/kubectl /usr/local/bin/kubectl
+      args:
+        executable: /bin/bash
+      register: move_result
+      changed_when: move_result.rc == 0
+
+    - name: Start minicube
+      shell: 'sudo minikube start --driver=docker --cpus=2 --memory=2048 --force'
+
+    - name: Проверка работы kubectl
+      command: kubectl version
+      register: kubectl_output
+
+    - name: Вывод результата
+      debug:
+        var: kubectl_output.stdout
