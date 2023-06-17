@@ -8,7 +8,6 @@ pipeline {
     containerName = "devsecops-container"
     serviceName = "devsecops-svc"
     imageName = "capsman/java-app:latest"
-    applicationURL = "http://localhost"
     applicationURI = "/increment/99"
   }
 
@@ -97,7 +96,11 @@ pipeline {
         }
       }
     }       
-
+    stage('OWASP ZAP - DAST') {
+      steps {
+        sh 'bash zap.sh'
+      }
+    }
   }
 
   post {

@@ -4,16 +4,19 @@
 
 sleep 5s
 
-PORT=$(kubectl -n default get svc ${serviceName} -o json | jq .spec.ports[].nodePort)
-
+PORT=$(kubectl -n default get svc ${serviceName} -o json | jq .spec.ports[].nodePort) / for original cluster
 echo $PORT
-echo $applicationURL:$PORT$applicationURI
+
+applicationURL=$(minikube service devsecops-svc --url)
+
+
+echo $applicationURL:$applicationURI
 
 if [[ ! -z "$PORT" ]];
 then
 
-    response=$(curl -s $applicationURL:$PORT$applicationURI)
-    http_code=$(curl -s -o /dev/null -w "%{http_code}" $applicationURL:$PORT$applicationURI)
+    response=$(curl -s $applicationURL:$applicationURI)
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" $applicationURL:$applicationURI)
 
     if [[ "$response" == 100 ]];
         then
