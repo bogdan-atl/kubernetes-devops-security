@@ -8,6 +8,8 @@ pipeline {
     containerName = "devsecops-container"
     serviceName = "devsecops-svc"
     imageName = "capsman/java-app:latest"
+    applicationURL = "http://localhost"
+    applicationURI = "/increment/99"
   }
 
   stages {
@@ -82,6 +84,19 @@ pipeline {
         )
       }
     }
+    stage('Integration Tests - DEV') {
+      steps {
+        script {
+          try {
+            sh "bash integration-test.sh"
+            }
+          catch (e) {
+            sh "kubectl -n default rollout undo deploy ${deploymentName}"
+          throw e
+          }
+        }
+      }
+    }       
 
   }
 
