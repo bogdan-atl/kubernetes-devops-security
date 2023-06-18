@@ -2,30 +2,6 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: node-app
-  namespace: default
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: node-app
-  template:
-    metadata:
-      labels:
-        app: node-app
-    spec:
-      containers:
-      - name: node-app
-        image: siddharth67/node-service:v1
-        securityContext:
-          runAsNonRoot: true
-          runAsUser: 100
-        ports:
-        - containerPort: 5000
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
   labels:
     app: devsecops
   name: devsecops
