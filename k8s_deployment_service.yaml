@@ -17,6 +17,9 @@ spec:
       containers:
       - name: node-app
         image: siddharth67/node-service:v1
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 100
         ports:
         - containerPort: 5000
 ---
