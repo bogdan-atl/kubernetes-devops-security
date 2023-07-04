@@ -105,9 +105,6 @@ pipeline {
       }
     }
     stage('Promote to Prod') {
-      agent{
-        label "controlplane"
-      }
       steps {
           sh 'bash cis-etcd.sh'
           sh 'bash cis-master.sh'
