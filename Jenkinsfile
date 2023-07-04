@@ -98,11 +98,23 @@ pipeline {
     }       
     stage('OWASP ZAP - DAST') {
       steps {
-        sh 'bash zap.sh'
+         catchError {
+            sh 'bash zap.sh'
+         }
+         echo currentBuild.result
+      }
+    }
+    stage('Promote to Prod') {
+      agent{
+        label "controlplane"
+      }
+      steps {
+          sh 'bash cis-etcd.sh'
+          sh 'bash cis-master.sh'
+          sh 'bash cis-node.sh'
       }
     }
   }
-
   post {
     always {
       junit 'target/surefire-reports/*.xml'
