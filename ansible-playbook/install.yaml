@@ -1,5 +1,5 @@
 ---
-- name: Установка Docker
+- name: Установка утилит DevSecOps
   hosts: all
   become: true
   tasks:
@@ -20,6 +20,7 @@
         - gnupg
         - jq
         - git
+        - nginx
 
     - name: Создание каталога /etc/apt/keyrings
       file:
@@ -232,3 +233,76 @@
     - name: Вывод результата
       debug:
         var: kubectl_output.stdout
+
+
+    - name: Download istio
+      ansible.builtin.get_url:
+        url: "https://istio.io/downloadIstio"
+        dest: /tmp/istiinstall.sh
+      become: yes
+      tags:
+        - istio
+
+    - name: Run a script with arguments (free form)
+      command: sh /tmp/istiinstall.sh
+      tags:
+        - istio
+
+    - name: Поиск папки Istio
+      find:
+        paths: /tmp
+        recurse: yes
+        patterns: "istio-*"
+        file_type: directory
+      register: istio_folder
+      tags:
+        - istio
+
+    - name: Выделение первого пути из найденных
+      set_fact:
+        istio_folder_path: "{{ istio_folder.files[0].path }}"
+      tags:
+        - istio
+
+    - name: Получение названия папки Istio
+      command: "basename {{ istio_folder_path }}"
+      register: istio_folder_name
+      become: yes
+      tags:
+        - istio
+
+    - name: Копирование istioctl в /usr/local/bin/
+      copy:
+        src: "/tmp/{{ istio_folder_name.stdout }}/bin/istioctl"
+        dest: /usr/local/bin/
+        remote_src: true
+      become: yes
+      tags:
+        - istio
+
+    - name: Add primissions istio
+      ansible.builtin.file:
+        path: /usr/local/bin/istioctl
+        owner: root
+        group: root
+        mode: '755'
+      tags:
+        - istio
+
+    - name: Установка Istio с профилем "demo"
+      command: "istioctl install --set profile=demo -y"
+      args:
+        chdir: "/tmp/{{ istio_folder_name.stdout }}"
+      become: yes
+      tags:
+        - istio
+
+    - name: Создание namespace "devsecops-istio"
+      command: "kubectl create namespace devsecops-istio"
+      become: yes
+
+
+    - name: Внедрение istio
+      command: "kubectl label namespace devsecops-istio istio-injection=enabled"
+      become: yes
+
