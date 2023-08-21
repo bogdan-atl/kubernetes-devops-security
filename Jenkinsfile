@@ -9,6 +9,7 @@ pipeline {
     serviceName = "devsecops-svc"
     imageName = "capsman/java-app:latest"
     applicationURI = "/increment/99"
+    applicationURL = "localhost"
   }
 
   stages {
