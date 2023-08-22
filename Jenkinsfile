@@ -8,7 +8,7 @@ pipeline {
     containerName = "devsecops-container"
     serviceName = "devsecops-svc"
     imageName = "capsman/java-app:latest"
-    applicationURI = "/increment/99"
+    applicationURI = "increment/99"
     applicationURL = "localhost"
   }
 
