@@ -21,6 +21,11 @@
         - jq
         - git
         - nginx
+        - python3-pip
+
+    - name: Install docker-compose python package
+      ansible.builtin.pip:
+        name: kubernetes
 
     - name: Создание каталога /etc/apt/keyrings
       file:
@@ -63,7 +68,6 @@
         mode: '0644'
       when: not gpg_key_key.stat.exists
 
-
     - name: Добавление репозитория Docker в /etc/apt/sources.list.d/docker.list
       shell: 'echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null'
       when: not gpg_key_key2.stat.exists
@@ -82,7 +86,6 @@
           - docker-compose-plugin
         state: present
 
-
     - name: Установка default-jdk
       become: true
       apt:
@@ -95,21 +98,23 @@
           - maven
         state: present
 
-    - name: Download Minikube binary
-      become: true
-      shell: curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
-      args:
-        chdir: /tmp
+    #- name: Download Minikube binary
+    #  become: true
+    #  shell: curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+    #  args:
+     #   chdir: /tmp
 
-    - name: Install Minikube
-      become: true
-      shell: install /tmp/minikube-linux-amd64 /usr/local/bin/minikube
+    #- name: Install Minikube
+    #  become: true
+    #  shell: install /tmp/minikube-linux-amd64 /usr/local/bin/minikube
+
+     #- name: Start minicube
+     # shell: 'sudo minikube start --driver=docker --cpus=2 --memory=2048 --force'
 
     #- name: Старт sonarqube
     #  become: true
      # shell: docker run -d --name sonarqube -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true -p 9000:9000 sonarqube:latest
      # changed_when: false
-
 
     - name: Add the trivy-repo
       apt:
@@ -154,8 +159,14 @@
         mode: '0755'
 
     - name: Run OPA in the background
-      shell: ./opa run -s &
-
+      shell:  ./opa run -s
+      async: 2592000
+      poll: 0
+      args:
+        chdir: /root
+      become: yes
+      tags:
+        - opa
 
     - name: Print the output of OPA run command
       debug:
@@ -223,9 +234,6 @@
       register: move_result
       changed_when: move_result.rc == 0
 
-    - name: Start minicube
-      shell: 'sudo minikube start --driver=docker --cpus=2 --memory=2048 --force'
-
     - name: Проверка работы kubectl
       command: kubectl version
       register: kubectl_output
@@ -234,6 +242,10 @@
       debug:
         var: kubectl_output.stdout
 
+    - name: Install kubebench
+      ansible.builtin.apt:
+        deb: https://github.com/aquasecurity/kube-bench/releases/download/v0.4.0/kube-bench_0.4.0_linux_amd64.deb
+      tags: kubebench
 
     - name: Download istio
       ansible.builtin.get_url:
@@ -250,7 +262,7 @@
 
     - name: Поиск папки Istio
       find:
-        paths: /tmp
+        paths: ~/
         recurse: yes
         patterns: "istio-*"
         file_type: directory
@@ -273,7 +285,7 @@
 
     - name: Копирование istioctl в /usr/local/bin/
       copy:
-        src: "/tmp/{{ istio_folder_name.stdout }}/bin/istioctl"
+        src: "{{ istio_folder_name.stdout }}/bin/istioctl"
         dest: /usr/local/bin/
         remote_src: true
       become: yes
@@ -292,7 +304,7 @@
     - name: Установка Istio с профилем "demo"
       command: "istioctl install --set profile=demo -y"
       args:
-        chdir: "/tmp/{{ istio_folder_name.stdout }}"
+        chdir: "{{ istio_folder_name.stdout }}"
       become: yes
       tags:
         - istio
@@ -301,8 +313,266 @@
       command: "kubectl create namespace devsecops-istio"
       become: yes
 
-
     - name: Внедрение istio
       command: "kubectl label namespace devsecops-istio istio-injection=enabled"
       become: yes
+
+   # - name: Install falco
+   #   command: "apt-get install -y falco"
+   #   become: yes
+   #   environment:
+   #     FALCO_FRONTEND: noninteractive
+   #   tags:
+   #     - falco
+
+    - name: Install keyrings falco
+      shell: "curl -fsSL https://falco.org/repo/falcosecurity-packages.asc | sudo gpg --dearmor -o /usr/share/keyrings/falco-archive-keyring.gpg"
+      become: yes
+      tags:
+        - falco-key
+
+    - name: Configure apt repository
+      lineinfile:
+        path: /etc/apt/sources.list.d/falcosecurity.list
+        line: "deb [signed-by=/usr/share/keyrings/falco-archive-keyring.gpg] https://download.falco.org/packages/deb stable main"
+        create: yes
+      tags:
+        - falco
+
+    - name: Update repositories cache
+      ansible.builtin.apt:
+        name: " {{ item }} "
+        update_cache: yes
+      loop:
+        - dkms
+        - make
+        - linux-headers-generic
+        - falco
+      tags:
+        - falco
+
+    - name: Download helm falco
+      ansible.builtin.get_url:
+        url: https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+        dest: ~/get_helm.sh
+        mode: '700'
+      become: yes
+      tags:
+        - falco
+
+    - name: Run falco
+      ansible.builtin.shell: ./get_helm.sh
+      tags:
+        - falco
+
+    - name: add helm falco
+      shell: "helm repo add falcosecurity https://falcosecurity.github.io/charts"
+      become: yes
+      tags:
+        - falco
+
+    - name: Start falcosidekick.webui
+      shell: "helm install falco falcosecurity/falco --namespace falco --create-namespace --set falcosidekick.enabled=true --set falcosidekick.webui.enabled=true"
+      become: yes
+      tags:
+        - falco
+
+    - name: Clon repo kubescan
+      git:
+        repo: https://github.com/octarinesec/kube-scan.git
+        dest: ~/kube-scan
+      become: yes
+      tags:
+        - kubescan
+
+    - name: start kube-scan
+      shell: "kubectl apply -f kube-scan.yaml"
+      args:
+        chdir: ~/kube-scan
+      become: yes
+      tags:
+        - kubescan
+
+    - name: Install vault start index.php
+      block:
+        - name: Git clone
+          git:
+            repo: https://github.com/sidd-harth/php-vault-example.git
+            dest: ~/vault
+
+        - name: Create a new namespace called vault-devsecops
+          kubernetes.core.k8s:
+            name: vault-devsecops
+            api_version: v1
+            kind: Namespace
+            state: present
+
+        - name: Add helm hashicorp vault repo
+          kubernetes.core.helm_repository:
+            name: hashicorp
+            repo_url: "https://helm.releases.hashicorp.com"
+
+        - name: Install vault using helm
+          kubernetes.core.helm:
+            name: vault
+            chart_ref: hashicorp/vault
+            release_namespace: vault-devsecops
+            set_values:
+                - { value: "ui.enabled=true" }
+                - { value: "ui.serviceType=NodePort" }
+                - { value: "server.dataStorage.enabled=false" }
+            chart_version: "0.17.0"
+
+        - name: Wait for Vault pod to be ready
+          kubernetes.core.k8s_info:
+            kind: Pod
+            name: vault-0
+            namespace: vault-devsecops
+            label_selectors:
+                - "status.phase=Running"
+            wait_sleep: 10
+            wait_timeout: 20  # Adjust the timeout as needed
+          register: vault_pod
+
+        - name: Check RC status of vault operator init
+          when: vault_pod.resources[0].status.phase == "Running"
+          kubernetes.core.k8s_exec:
+            namespace: vault-devsecops
+            pod: vault-0
+            command: vault operator init
+          register: vault_init_output
+
+        - name: Debug
+          debug:
+            var: vault_init_output.stdout_lines
+
+        - name: Parse Vault Initialization Data
+          set_fact:
+             unseal_keys:
+                - "{{ vault_init_output.stdout_lines[0] | regex_replace('[0mUnseal Key [0-9]+: ', '') }}"
+                - "{{ vault_init_output.stdout_lines[1] | regex_replace('[0mUnseal Key [0-9]+: ', '') }}"
+                - "{{ vault_init_output.stdout_lines[2] | regex_replace('[0mUnseal Key [0-9]+: ', '') }}"
+             initial_root_token: "{{ vault_init_output.stdout_lines[6] | regex_replace('Initial Root Token: ', '') }}"
+
+        - name: Display extracted data
+          debug:
+            var: unseal_keys, initial_root_token
+
+        - name: Set Operator unseal_keys
+          kubernetes.core.k8s_exec:
+            namespace: vault-devsecops
+            pod: vault-0
+            command: vault operator unseal {{ item }}
+          loop:
+            - "{{ unseal_keys[0] }}"
+            - "{{ unseal_keys[1] }}"
+            - "{{ unseal_keys[2] }}"
+
+        - name: Login into the vault with root token
+          kubernetes.core.k8s_exec:
+            namespace: vault-devsecops
+            pod: vault-0
+            command: vault login {{ initial_root_token }}
+          register: vault_login_output
+
+        - name: Debug
+          debug:
+            var: vault_login_output.stdout_lines
+
+        - name: Enable path as below
+          kubernetes.core.k8s_exec:
+            namespace: vault-devsecops
+            pod: vault-0
+            command: vault secrets enable -path=devsecops kv-v2
+
+        - name: Put the secret values in devsecops path
+          kubernetes.core.k8s_exec:
+            namespace: vault-devsecops
+            pod: vault-0
+            command: vault kv put devsecops/secret-data username=devsecops password=skdjD432JDjd apikey=dgg7B3BaaeBleqE
+
+
+        - name: Copy content into a file in the remote pod
+          kubernetes.core.k8s_cp:
+            state: to_pod
+            namespace: vault-devsecops
+            pod: vault-0
+            remote_path: /home/vault/policy.hcl
+            content: >-
+                path "devsecops/secret-data" {
+                    capabilities = ["read"]
+                }
+
+        - name: Write the policy
+          kubernetes.core.k8s_exec:
+            namespace: vault-devsecops
+            pod: vault-0
+            command: vault policy write devsecops-app /home/vault/policy.hcl
+          register: vault_policy_output
+
+        - name: Debug
+          debug:
+            var: vault_policy_output.stdout_lines
+
+        - name: Enable the kubernetes authentication method
+          kubernetes.core.k8s_exec:
+            namespace: vault-devsecops
+            pod: vault-0
+            command: vault auth enable kubernetes
+
+        - name: Configure vault to talk to the Kubernetes cluster
+          kubernetes.core.k8s_exec:
+                namespace: vault-devsecops
+                pod: vault-0
+                command: sh -c 'echo $KUBERNETES_PORT_443_TCP_ADDR'
+          register: KUBERNETES_PORT_443_TCP_ADDR
+
+
+        - name: Debug
+          debug:
+            var: KUBERNETES_PORT_443_TCP_ADDR.stdout_lines | join('')
+
+
+        - name: Configure vault to talk to the Kubernetes cluster
+          kubernetes.core.k8s_exec:
+            namespace: vault-devsecops
+            pod: vault-0
+            command: sh -c 'vault write auth/kubernetes/config token_reviewer_jwt="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" kubernetes_host=https://{{ KUBERNETES_PORT_443_TCP_ADDR.stdout_lines | join('') }}:443 kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
+          register: vault_policy
+
+        - name: Debug
+          debug:
+            var: vault_policy.stdout_lines
+
+
+        - name: Configure the required role
+          kubernetes.core.k8s_exec:
+            namespace: vault-devsecops
+            pod: vault-0
+            command: >-
+                vault write auth/kubernetes/role/phpapp
+                bound_service_account_names=devsecops-app
+                bound_service_account_namespaces=vault-devsecops
+                policies=devsecops-app
+                ttl=1h
+          register: role
+
+        - name: Debug
+          debug:
+            var: role.stdout_lines
+
+      rescue:
+       - name: Print when errors
+         ansible.builtin.debug:
+           msg: 'Install end with errors'
+
+       - name: Remove a k8s namespace
+         kubernetes.core.k8s:
+            name: vault-devsecops
+            api_version: v1
+            kind: Namespace
+            state: absent
+      tags: vault
+
+
 
