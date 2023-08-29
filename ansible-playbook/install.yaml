@@ -20,57 +20,33 @@
         - gnupg
         - jq
         - git
-        - nginx
         - python3-pip
 
     - name: Install docker-compose python package
       ansible.builtin.pip:
         name: kubernetes
 
-    - name: Создание каталога /etc/apt/keyrings
-      file:
-        path: /etc/apt/keyrings
-        state: directory
-        mode: '0755'
-
-    - name: Создание каталога /etc/apt/sources.list.d
-      file:
-        path: /etc/apt/sources.list.d
-        state: directory
-        mode: '0755'
-
-    - name: Check if Docker GPG key
-      stat:
-        path: /etc/apt/trusted.gpg.d/docker.gpg
-      register: gpg_key_file
-
-    - name: Check if Docker GPG keyring
-      stat:
-        path: /usr/share/keyrings/docker-archive-keyring.gpg
-      register: gpg_key_key
-
-    - name: Check if Docker GPG keyring 2
-      stat:
-        path: /usr/share/keyrings/docker-archive-keyring.gpg
-      register: gpg_key_key2
-
     - name: Add Docker GPG key
-      shell: 'curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/docker.gpg'
-      when: not gpg_key_file.stat.exists
-
-    - name: Add docker GPG keyrings
-      shell: 'curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg'
-      when: not gpg_key_key.stat.exists
+      ansible.builtin.get_url:
+        url: "{{ item.url }}"
+        dest: "{{ item.dest }}"
+      loop:
+        - url: https://download.docker.com/linux/ubuntu/gpg
+          dest: /etc/apt/trusted.gpg.d/docker.gpg
+        - url: https://download.docker.com/linux/ubuntu/gpg
+          dest: /usr/share/keyrings/docker-archive-keyring.gpg
 
     - name: Установка прав на файл docker.gpg
       file:
         path: /etc/apt/trusted.gpg.d/docker.gpg
         mode: '0644'
-      when: not gpg_key_key.stat.exists
 
-    - name: Добавление репозитория Docker в /etc/apt/sources.list.d/docker.list
-      shell: 'echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null'
-      when: not gpg_key_key2.stat.exists
+    - name: Add Docker repository to /etc/apt/sources.list.d/docker.list
+      ansible.builtin.blockinfile:
+        path: /etc/apt/sources.list.d/docker.list
+        block: |
+         deb [arch={{ ansible_architecture }} signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable
+      become: yes
 
     - name: Обновление списка пакетов после добавления Docker
       apt:
@@ -206,9 +182,10 @@
         dest: /root/kubesec_linux_amd64.tar.gz
 
     - name: Extract kubesec tar.gz
-      become: true
-      become_user: root
-      command: tar -xvf /root/kubesec_linux_amd64.tar.gz -C /root/
+      ansible.builtin.unarchive:
+        src: /root/kubesec_linux_amd64.tar.gz
+        dest: /root/
+        remote_src: yes
 
     - name: Move kubesec to /usr/bin/
       become: true
@@ -255,7 +232,7 @@
       tags:
         - istio
 
-    - name: Run a script with arguments (free form)
+    - name: Run a istio scripts
       command: sh /tmp/istiinstall.sh
       tags:
         - istio
@@ -302,20 +279,36 @@
         - istio
 
     - name: Установка Istio с профилем "demo"
-      command: "istioctl install --set profile=demo -y"
+      ansible.builtin.command:
+        argv:
+          - istioctl
+          - install
+          - --set
+          - profile=demo
+          - -y
       args:
         chdir: "{{ istio_folder_name.stdout }}"
       become: yes
       tags:
         - istio
 
-    - name: Создание namespace "devsecops-istio"
-      command: "kubectl create namespace devsecops-istio"
-      become: yes
+    - name: Create a new namespace called devsecops-istio
+      kubernetes.core.k8s:
+        name: devsecops-istio
+        api_version: v1
+        kind: Namespace
+        state: present
 
-    - name: Внедрение istio
-      command: "kubectl label namespace devsecops-istio istio-injection=enabled"
-      become: yes
+    - name: istio-injection
+      kubernetes.core.k8s:
+        state: patched
+        kind: Namespace
+        name: devsecops-istio
+        definition:
+            metadata:
+                labels:
+                   istio-injection: enabled
+
 
    # - name: Install falco
    #   command: "apt-get install -y falco"
@@ -325,11 +318,11 @@
    #   tags:
    #     - falco
 
+
     - name: Install keyrings falco
-      shell: "curl -fsSL https://falco.org/repo/falcosecurity-packages.asc | sudo gpg --dearmor -o /usr/share/keyrings/falco-archive-keyring.gpg"
-      become: yes
-      tags:
-        - falco-key
+      ansible.builtin.get_url:
+        url: https://falco.org/repo/falcosecurity-packages.asc
+        dest: /usr/share/keyrings/falco-archive-keyring.gpg
 
     - name: Configure apt repository
       lineinfile:
@@ -365,17 +358,22 @@
       tags:
         - falco
 
-    - name: add helm falco
-      shell: "helm repo add falcosecurity https://falcosecurity.github.io/charts"
-      become: yes
-      tags:
-        - falco
+    - name: Add helm falco repo
+      kubernetes.core.helm_repository:
+        name: falcosecurity
+        repo_url: "https://falcosecurity.github.io/charts"
+      tags: falco-helm
 
-    - name: Start falcosidekick.webui
-      shell: "helm install falco falcosecurity/falco --namespace falco --create-namespace --set falcosidekick.enabled=true --set falcosidekick.webui.enabled=true"
-      become: yes
-      tags:
-        - falco
+    - name: Install falco using helm
+      kubernetes.core.helm:
+        name: falco
+        chart_ref: falcosecurity/falco
+        release_namespace: falco
+        create_namespace: true
+        set_values:
+            - { value: "falcosidekick.enabled=true" }
+            - { value: "falcosidekick.webui.enabled=true" }
+      tags: falco-helm
 
     - name: Clon repo kubescan
       git:
@@ -385,13 +383,12 @@
       tags:
         - kubescan
 
-    - name: start kube-scan
-      shell: "kubectl apply -f kube-scan.yaml"
-      args:
-        chdir: ~/kube-scan
-      become: yes
-      tags:
-        - kubescan
+    - name: Apply the template kube-scan.yaml in kube-scan.yamlnamespace
+      kubernetes.core.k8s:
+        state: present
+        src: ~/kube-scan/kube-scan.yaml
+        namespace: kube-scan.yaml
+      tags: kubescan
 
     - name: Install vault start index.php
       block:
@@ -399,13 +396,6 @@
           git:
             repo: https://github.com/sidd-harth/php-vault-example.git
             dest: ~/vault
-
-        - name: Create a new namespace called vault-devsecops
-          kubernetes.core.k8s:
-            name: vault-devsecops
-            api_version: v1
-            kind: Namespace
-            state: present
 
         - name: Add helm hashicorp vault repo
           kubernetes.core.helm_repository:
@@ -417,6 +407,7 @@
             name: vault
             chart_ref: hashicorp/vault
             release_namespace: vault-devsecops
+            create_namespace: true
             set_values:
                 - { value: "ui.enabled=true" }
                 - { value: "ui.serviceType=NodePort" }
@@ -572,7 +563,31 @@
             api_version: v1
             kind: Namespace
             state: absent
+
+       - name: Fail_and playbook
+         fail:
+           msg: END
+
       tags: vault
 
+    - name: Install vault start index.php
+      block:
+        - name: Build php project
+          community.docker.docker_image:
+            name: vault-app:php
+            build:
+              path: ~/vault
+            source: build
 
+        - name: Template a patch-annotations.yaml
+          template:
+            src: template/patch-annotations.yaml.j2
+            dest: ~/vault/patch-annotations.yaml
 
+        - name: Apply the template php-app-k8s-deploy.yaml in vault-devsecops namespace
+          kubernetes.core.k8s:
+            state: present
+            src: ~/vault/php-app-k8s-deploy.yaml
+            namespace: vault-devsecops
+
+      tags: deploy
